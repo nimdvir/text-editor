@@ -50,6 +50,7 @@ import com.mikepenz.markdown.m3.Markdown
 import io.github.nimdvir.notepad.EditorViewModel
 import io.github.nimdvir.notepad.MarkdownBlocks
 import io.github.nimdvir.notepad.MdBlock
+import io.github.nimdvir.notepad.SplitLayout
 import io.github.nimdvir.notepad.ViewMode
 import kotlinx.coroutines.flow.collectLatest
 
@@ -135,10 +136,16 @@ fun MarkdownWorkspace(vm: EditorViewModel, editorFocus: FocusRequester) {
 
     when (mode) {
         ViewMode.PREVIEW -> previewPane(Modifier.fillMaxSize())
-        // Side by side only in landscape. Deciding by the free space instead flips the layout when the
-        // keyboard opens, which rebuilds the editor, drops focus and closes the keyboard again.
+        // Never decide by the free space: the keyboard would flip the layout, which rebuilds the editor,
+        // drops focus and closes the keyboard again.
         ViewMode.SPLIT -> Box(Modifier.fillMaxSize()) {
-            if (LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+            val sideBySide = when (vm.settings.splitLayout) {
+                SplitLayout.SIDE_BY_SIDE -> true
+                SplitLayout.STACKED -> false
+                SplitLayout.AUTO -> landscape
+            }
+            if (sideBySide) {
                 Row(Modifier.fillMaxSize()) {
                     editorPane(Modifier.weight(1f))
                     VerticalDivider()

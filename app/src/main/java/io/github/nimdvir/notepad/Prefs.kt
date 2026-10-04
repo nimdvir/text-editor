@@ -4,6 +4,13 @@ import android.content.Context
 
 enum class ThemeMode(val label: String) { SYSTEM("System default"), LIGHT("Light"), DARK("Dark") }
 
+/** How Split view arranges the text and the formatted view. */
+enum class SplitLayout(val label: String) {
+    AUTO("Automatic (by orientation)"),
+    STACKED("Top and bottom"),
+    SIDE_BY_SIDE("Side by side"),
+}
+
 data class ViewSettings(
     val wordWrap: Boolean = true,
     val statusBar: Boolean = true,
@@ -13,6 +20,7 @@ data class ViewSettings(
     val autoSave: Boolean = false,
     val syncScroll: Boolean = true,
     val markdownToolbar: Boolean = true,
+    val splitLayout: SplitLayout = SplitLayout.AUTO,
 ) {
     companion object {
         const val DEFAULT_FONT_SIZE = 16f
@@ -34,6 +42,8 @@ class Prefs(context: Context) {
         autoSave = sp.getBoolean("autoSave", false),
         syncScroll = sp.getBoolean("syncScroll", true),
         markdownToolbar = sp.getBoolean("markdownToolbar", true),
+        splitLayout = runCatching { SplitLayout.valueOf(sp.getString("splitLayout", null)!!) }
+            .getOrDefault(SplitLayout.AUTO),
     )
 
     fun saveViewSettings(s: ViewSettings) {
@@ -46,6 +56,7 @@ class Prefs(context: Context) {
             .putBoolean("autoSave", s.autoSave)
             .putBoolean("syncScroll", s.syncScroll)
             .putBoolean("markdownToolbar", s.markdownToolbar)
+            .putString("splitLayout", s.splitLayout.name)
             .apply()
     }
 }

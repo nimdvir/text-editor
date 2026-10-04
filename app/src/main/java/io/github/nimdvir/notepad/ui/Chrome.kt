@@ -43,6 +43,7 @@ import io.github.nimdvir.notepad.DocType
 import io.github.nimdvir.notepad.EditorViewModel
 import io.github.nimdvir.notepad.LineEnding
 import io.github.nimdvir.notepad.PendingAction
+import io.github.nimdvir.notepad.SplitLayout
 import io.github.nimdvir.notepad.TextEncoding
 import io.github.nimdvir.notepad.TextSearch
 import io.github.nimdvir.notepad.ThemeMode
@@ -169,6 +170,13 @@ fun MenuBar(vm: EditorViewModel, compact: Boolean = false) {
                     }
                     Item("Sync scroll (split view)", checked = s.syncScroll) {
                         close(); vm.updateSettings { it.copy(syncScroll = !it.syncScroll) }
+                    }
+                    HorizontalDivider()
+                    MenuHeader("Split layout")
+                    for (layout in SplitLayout.entries) {
+                        Item(layout.label, checked = s.splitLayout == layout) {
+                            close(); vm.updateSettings { it.copy(splitLayout = layout) }
+                        }
                     }
                 }
                 if (type == DocType.CSV) {
