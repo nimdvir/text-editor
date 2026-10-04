@@ -139,13 +139,7 @@ fun MarkdownWorkspace(vm: EditorViewModel, editorFocus: FocusRequester) {
         // Never decide by the free space: the keyboard would flip the layout, which rebuilds the editor,
         // drops focus and closes the keyboard again.
         ViewMode.SPLIT -> Box(Modifier.fillMaxSize()) {
-            val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-            val sideBySide = when (vm.settings.splitLayout) {
-                SplitLayout.SIDE_BY_SIDE -> true
-                SplitLayout.STACKED -> false
-                SplitLayout.AUTO -> landscape
-            }
-            if (sideBySide) {
+            if (isSideBySide(vm.settings.splitLayout)) {
                 Row(Modifier.fillMaxSize()) {
                     editorPane(Modifier.weight(1f))
                     VerticalDivider()
@@ -163,6 +157,14 @@ fun MarkdownWorkspace(vm: EditorViewModel, editorFocus: FocusRequester) {
         }
         else -> editorPane(Modifier.fillMaxSize())
     }
+}
+
+/** Whether Split view shows the panes side by side for this setting (Automatic = when the phone is sideways). */
+@Composable
+fun isSideBySide(layout: SplitLayout): Boolean = when (layout) {
+    SplitLayout.SIDE_BY_SIDE -> true
+    SplitLayout.STACKED -> false
+    SplitLayout.AUTO -> LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 }
 
 private fun offsetToY(layout: TextLayoutResult, offset: Int, bottom: Boolean = false): Float {

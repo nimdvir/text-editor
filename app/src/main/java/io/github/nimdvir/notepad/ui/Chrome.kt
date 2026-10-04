@@ -34,10 +34,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.nimdvir.notepad.BuildConfig
 import io.github.nimdvir.notepad.DialogState
 import io.github.nimdvir.notepad.DocType
 import io.github.nimdvir.notepad.EditorViewModel
@@ -157,6 +160,15 @@ fun MenuBar(vm: EditorViewModel, compact: Boolean = false) {
             }
             Menu("View") { close ->
                 val s = vm.settings
+                if (type == DocType.MARKDOWN) {
+                    MenuHeader("Split layout")
+                    for (layout in SplitLayout.entries) {
+                        Item(layout.label, checked = s.splitLayout == layout) {
+                            close(); vm.updateSettings { it.copy(splitLayout = layout) }
+                        }
+                    }
+                    HorizontalDivider()
+                }
                 Item("Zoom in", "Ctrl+Plus") { vm.zoomIn() }
                 Item("Zoom out", "Ctrl+Minus") { vm.zoomOut() }
                 Item("Restore default zoom", "Ctrl+0") { vm.zoomReset() }
@@ -171,13 +183,6 @@ fun MenuBar(vm: EditorViewModel, compact: Boolean = false) {
                     Item("Sync scroll (split view)", checked = s.syncScroll) {
                         close(); vm.updateSettings { it.copy(syncScroll = !it.syncScroll) }
                     }
-                    HorizontalDivider()
-                    MenuHeader("Split layout")
-                    for (layout in SplitLayout.entries) {
-                        Item(layout.label, checked = s.splitLayout == layout) {
-                            close(); vm.updateSettings { it.copy(splitLayout = layout) }
-                        }
-                    }
                 }
                 if (type == DocType.CSV) {
                     Item("First row is header", checked = vm.csvHasHeader) { close(); vm.csvHasHeader = !vm.csvHasHeader }
@@ -187,17 +192,22 @@ fun MenuBar(vm: EditorViewModel, compact: Boolean = false) {
                 for (mode in ThemeMode.entries) {
                     Item(mode.label, checked = s.theme == mode) { close(); vm.updateSettings { it.copy(theme = mode) } }
                 }
+                HorizontalDivider()
+                Item("Notepad ${BuildConfig.VERSION_NAME}", enabled = false) {}
             }
             Spacer(Modifier.weight(1f))
             if (compact && vm.isDirty) {
                 TextButton(onClick = { vm.save() }) { Text("Save") }
             }
             when (type) {
-                DocType.MARKDOWN -> ModeCycleButton(
-                    options = listOf(ViewMode.EDIT to "✎ Edit", ViewMode.SPLIT to "◫ Split", ViewMode.PREVIEW to "👁 Preview"),
-                    selected = vm.mode,
-                    onSelect = vm::changeMode,
-                )
+                DocType.MARKDOWN -> {
+                    if (vm.mode == ViewMode.SPLIT) SplitLayoutToggle(vm)
+                    ModeCycleButton(
+                        options = listOf(ViewMode.EDIT to "✎ Edit", ViewMode.SPLIT to "◫ Split", ViewMode.PREVIEW to "👁 Preview"),
+                        selected = vm.mode,
+                        onSelect = vm::changeMode,
+                    )
+                }
                 DocType.CSV -> ModeCycleButton(
                     options = listOf(ViewMode.TABLE to "▦ Table", ViewMode.EDIT to "✎ Text"),
                     selected = vm.mode,
@@ -206,6 +216,23 @@ fun MenuBar(vm: EditorViewModel, compact: Boolean = false) {
                 DocType.TEXT -> Unit
             }
         }
+    }
+}
+
+/** In Split view: ⇅ (top and bottom) or ⇄ (side by side). Tap to switch; the choice is remembered. */
+@Composable
+private fun SplitLayoutToggle(vm: EditorViewModel) {
+    val sideBySide = isSideBySide(vm.settings.splitLayout)
+    TextButton(
+        onClick = {
+            val next = if (sideBySide) SplitLayout.STACKED else SplitLayout.SIDE_BY_SIDE
+            vm.updateSettings { it.copy(splitLayout = next) }
+        },
+        modifier = Modifier.semantics {
+            contentDescription = if (sideBySide) "Show top and bottom" else "Show side by side"
+        },
+    ) {
+        Text(if (sideBySide) "⇄" else "⇅", style = MaterialTheme.typography.titleMedium)
     }
 }
 

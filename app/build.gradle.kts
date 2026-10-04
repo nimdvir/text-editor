@@ -12,8 +12,8 @@ android {
         applicationId = "io.github.nimdvir.notepad"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "2.4"
+        versionCode = 7
+        versionName = "2.5"
     }
 
     // A fixed key, so every GitHub build is signed the same way and installs over the previous one.
@@ -41,6 +41,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
