@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Scaffold
@@ -36,14 +37,19 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import io.github.nimdvir.notepad.DialogState
+import io.github.nimdvir.notepad.DocType
 import io.github.nimdvir.notepad.DocumentStore
 import io.github.nimdvir.notepad.EditorViewModel
 import io.github.nimdvir.notepad.PendingAction
 import io.github.nimdvir.notepad.UiEvent
+import io.github.nimdvir.notepad.ViewMode
 import kotlinx.coroutines.launch
 
 /** MIME types offered in the Open picker. Drive sometimes reports .md files as octet-stream. */
-private val OPEN_MIME_TYPES = arrayOf("text/*", "application/octet-stream", "application/x-markdown")
+private val OPEN_MIME_TYPES = arrayOf(
+    "text/*", "application/octet-stream", "application/x-markdown", "application/csv", "text/csv",
+    "text/comma-separated-values",
+)
 
 /** Like [ActivityResultContracts.CreateDocument] but picks the MIME type from the file name. */
 private class CreateTextDocument : ActivityResultContract<String, Uri?>() {
@@ -62,6 +68,7 @@ fun NotepadApp(vm: EditorViewModel, finish: () -> Unit) {
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val editorFocus = remember { FocusRequester() }
+    val plainScroll = rememberScrollState()
 
     val openLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
         vm.onOpenPicked(it)
@@ -69,18 +76,22 @@ fun NotepadApp(vm: EditorViewModel, finish: () -> Unit) {
     val saveAsLauncher = rememberLauncherForActivityResult(CreateTextDocument()) {
         vm.onSaveAsPicked(it)
     }
+    val folderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) {
+        vm.onFolderPicked(it)
+    }
 
     LaunchedEffect(vm) {
         vm.events.collect { event ->
             when (event) {
                 UiEvent.LaunchOpenPicker -> openLauncher.launch(OPEN_MIME_TYPES)
                 is UiEvent.LaunchSaveAs -> saveAsLauncher.launch(event.suggestedName)
+                UiEvent.LaunchFolderPicker -> folderLauncher.launch(null)
                 is UiEvent.Message -> scope.launch {
                     snackbar.currentSnackbarData?.dismiss()
                     snackbar.showSnackbar(event.text)
                 }
                 UiEvent.FocusEditor -> {
-                    withFrameNanos { } // let the editor appear if we just left preview mode
+                    withFrameNanos { } // let the editor appear if we just switched views
                     runCatching { editorFocus.requestFocus() }
                 }
                 UiEvent.Finish -> finish()
@@ -88,10 +99,12 @@ fun NotepadApp(vm: EditorViewModel, finish: () -> Unit) {
         }
     }
 
+    val type = vm.doc.type
     BackHandler {
         when {
             vm.findVisible -> vm.hideFind()
-            vm.preview -> vm.preview = false
+            vm.blockEdit != null -> vm.commitBlockEdit()
+            type == DocType.MARKDOWN && vm.mode != ViewMode.EDIT -> vm.changeMode(ViewMode.EDIT)
             else -> vm.request(PendingAction.Exit)
         }
     }
@@ -101,7 +114,7 @@ fun NotepadApp(vm: EditorViewModel, finish: () -> Unit) {
         topBar = {
             Column {
                 TitleBar(vm)
-                MenuBar(vm, onPaste = { vm.replaceSelection(it) })
+                MenuBar(vm)
                 HorizontalDivider()
                 if (vm.findVisible) FindReplaceBar(vm)
             }
@@ -117,11 +130,23 @@ fun NotepadApp(vm: EditorViewModel, finish: () -> Unit) {
         ) {
             if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             Box(Modifier.weight(1f)) {
-                if (vm.preview) {
-                    MarkdownPreview(vm.text.text.toString())
-                } else {
-                    Editor(vm.text, vm.settings, editorFocus)
+                when {
+                    type == DocType.MARKDOWN -> MarkdownWorkspace(vm, editorFocus)
+                    type == DocType.CSV && vm.mode == ViewMode.TABLE -> CsvTable(vm)
+                    else -> Editor(
+                        state = vm.text,
+                        settings = vm.settings,
+                        focusRequester = editorFocus,
+                        markdown = false,
+                        scrollState = plainScroll,
+                    )
                 }
+            }
+            val showToolbar = type == DocType.MARKDOWN && vm.settings.markdownToolbar &&
+                (vm.mode != ViewMode.PREVIEW || vm.blockEdit != null)
+            if (showToolbar) {
+                HorizontalDivider()
+                MarkdownToolbar(vm)
             }
             if (vm.settings.statusBar) {
                 HorizontalDivider()
@@ -141,12 +166,7 @@ fun NotepadApp(vm: EditorViewModel, finish: () -> Unit) {
             onGo = vm::goToLine,
             onCancel = { vm.dialog = null },
         )
-        DialogState.Recent -> RecentFilesDialog(
-            files = vm.recent,
-            onOpen = vm::openRecent,
-            onClear = vm::clearRecent,
-            onCancel = { vm.dialog = null },
-        )
+        DialogState.Library -> LibraryScreen(vm, onClose = { vm.dialog = null })
         null -> Unit
     }
 }
@@ -160,7 +180,7 @@ private fun handleShortcut(e: KeyEvent, vm: EditorViewModel): Boolean {
         ctrl && shift && e.key == Key.S -> vm.saveAs()
         ctrl && e.key == Key.S -> vm.save()
         ctrl && e.key == Key.O -> vm.request(PendingAction.OpenPicker)
-        ctrl && e.key == Key.N -> vm.request(PendingAction.New(markdown = false))
+        ctrl && e.key == Key.N -> vm.request(PendingAction.New(DocType.TEXT))
         ctrl && e.key == Key.F -> vm.showFind(replace = false)
         ctrl && e.key == Key.H -> vm.showFind(replace = true)
         ctrl && e.key == Key.G -> vm.dialog = DialogState.GoTo

@@ -8,12 +8,15 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.text.TextRange
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -22,48 +25,64 @@ import java.text.DateFormat
 import java.util.Date
 import java.util.Properties
 
+enum class DocType(val untitledName: String, val initialText: String) {
+    TEXT("Untitled.txt", ""),
+    MARKDOWN("Untitled.md", ""),
+    CSV("Untitled.csv", "Column 1,Column 2,Column 3\n,,\n"),
+}
+
+/** Edit: plain/styled text. Split: text + formatted side by side. Preview: formatted only. Table: CSV grid. */
+enum class ViewMode { EDIT, SPLIT, PREVIEW, TABLE }
+
 /** What is open: where it lives and how to write it back. `uri == null` means never saved. */
 data class DocInfo(
     val uri: Uri? = null,
-    val name: String = UNTITLED,
+    val name: String = DocType.TEXT.untitledName,
     val encoding: TextEncoding = TextEncoding.UTF8,
     val lineEnding: LineEnding = TextCodec.DEFAULT_LINE_ENDING,
 ) {
-    val isMarkdown get() = DocumentStore.isMarkdown(name)
-
-    companion object {
-        const val UNTITLED = "Untitled.txt"
-        const val UNTITLED_MD = "Untitled.md"
-    }
+    val type: DocType
+        get() = when {
+            DocumentStore.isMarkdown(name) -> DocType.MARKDOWN
+            Csv.isCsvName(name) -> DocType.CSV
+            else -> DocType.TEXT
+        }
 }
 
 /** Actions that would discard the current text, so they go through the "save changes?" prompt. */
 sealed interface PendingAction {
-    data class New(val markdown: Boolean) : PendingAction
+    data class New(val type: DocType) : PendingAction
     data object OpenPicker : PendingAction
-    data class OpenUri(val uri: Uri) : PendingAction
+    data class OpenUri(val uri: Uri, val temporary: Boolean = false) : PendingAction
     data object Exit : PendingAction
 }
 
 sealed interface DialogState {
     data class UnsavedChanges(val then: PendingAction) : DialogState
-    data class LargeFile(val uri: Uri, val sizeBytes: Long) : DialogState
+    data class LargeFile(val uri: Uri, val sizeBytes: Long, val temporary: Boolean) : DialogState
     data object GoTo : DialogState
-    data object Recent : DialogState
+    data object Library : DialogState
 }
 
 sealed interface UiEvent {
     data object LaunchOpenPicker : UiEvent
     data class LaunchSaveAs(val suggestedName: String) : UiEvent
+    data object LaunchFolderPicker : UiEvent
     data class Message(val text: String) : UiEvent
     data object FocusEditor : UiEvent
     data object Finish : UiEvent
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+/** A Markdown block being edited inside the formatted view. */
+class BlockEdit(val start: Int, val end: Int, val state: TextFieldState)
+
+data class CsvSort(val column: Int, val ascending: Boolean)
+
+@OptIn(ExperimentalFoundationApi::class, FlowPreview::class)
 class EditorViewModel(app: Application) : AndroidViewModel(app) {
     private val store = DocumentStore(app.contentResolver)
     private val prefs = Prefs(app)
+    private val libraryStore = Library(File(app.filesDir, "library.json"))
     private val draftText = File(app.filesDir, "draft.txt")
     private val draftMeta = File(app.filesDir, "draft.properties")
 
@@ -85,12 +104,18 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     var settings by mutableStateOf(prefs.loadViewSettings())
         private set
-    var recent by mutableStateOf(prefs.loadRecent())
+    var library by mutableStateOf(libraryStore.load())
         private set
     var busy by mutableStateOf(false)
         private set
-    var preview by mutableStateOf(false)
+    var mode by mutableStateOf(ViewMode.EDIT)
     var dialog by mutableStateOf<DialogState?>(null)
+
+    /** Status-bar note for saves, e.g. "Saved 10:42". */
+    var saveStatus by mutableStateOf<String?>(null)
+        private set
+
+    val isFavorite by derivedStateOf { doc.uri != null && library.favoriteFiles.any { it.uri == doc.uri } }
 
     // Find / Replace bar
     var findVisible by mutableStateOf(false)
@@ -101,6 +126,17 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var replaceWith by mutableStateOf("")
     var matchCase by mutableStateOf(false)
 
+    // Markdown
+    var blockEdit by mutableStateOf<BlockEdit?>(null)
+        private set
+
+    /** Offset of the text at the top of the visible pane, so switching views keeps your place. */
+    var anchorOffset = 0
+
+    // CSV table
+    var csvHasHeader by mutableStateOf(true)
+    var csvSort by mutableStateOf<CsvSort?>(null)
+
     private val _events = Channel<UiEvent>(Channel.BUFFERED)
     val events: Flow<UiEvent> = _events.receiveAsFlow()
 
@@ -108,14 +144,19 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     private var afterSave: PendingAction? = null
 
     private var exiting = false
+    private var saving = false
 
     init {
         restoreDraft()
+        viewModelScope.launch {
+            snapshotFlow { text.text }.debounce(AUTOSAVE_DELAY_MS).collect { autoSave() }
+        }
     }
 
     // ---- File ----
 
     fun request(action: PendingAction) {
+        commitBlockEdit()
         if (isDirty) dialog = DialogState.UnsavedChanges(action) else perform(action)
     }
 
@@ -131,11 +172,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun perform(action: PendingAction) {
         when (action) {
-            is PendingAction.New -> loadDocument(
-                DocInfo(name = if (action.markdown) DocInfo.UNTITLED_MD else DocInfo.UNTITLED), "",
-            )
+            is PendingAction.New -> loadDocument(DocInfo(name = action.type.untitledName), action.type.initialText)
             PendingAction.OpenPicker -> send(UiEvent.LaunchOpenPicker)
-            is PendingAction.OpenUri -> openDocument(action.uri, confirmLarge = true)
+            is PendingAction.OpenUri -> openDocument(action.uri, confirmLarge = true, temporary = action.temporary)
             PendingAction.Exit -> {
                 exiting = true // the user chose to discard; don't write a draft on the way out
                 deleteDraft()
@@ -147,47 +186,42 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun onOpenPicked(uri: Uri?) {
         if (uri == null) return
         store.persistPermission(uri)
-        openDocument(uri, confirmLarge = true)
+        openDocument(uri, confirmLarge = true, temporary = false)
     }
 
     fun openLargeFileAnyway() {
         val d = dialog as? DialogState.LargeFile ?: return
         dialog = null
-        openDocument(d.uri, confirmLarge = false)
+        openDocument(d.uri, confirmLarge = false, temporary = d.temporary)
     }
 
     /** Opens a file shared with us by another app (e.g. "Open with" from the Drive app). */
     fun openFromIntent(uri: Uri) {
         store.persistPermission(uri)
+        request(PendingAction.OpenUri(uri, temporary = !store.hasPersistedPermission(uri)))
+    }
+
+    /** Opens a file from the Library (history, favorites, or a favorite folder). */
+    fun openFromLibrary(uri: Uri) {
+        dialog = null
         request(PendingAction.OpenUri(uri))
     }
 
-    fun openRecent(file: RecentFile) {
-        dialog = null
-        request(PendingAction.OpenUri(file.uri))
-    }
-
-    fun clearRecent() {
-        recent = emptyList()
-        prefs.saveRecent(recent)
-    }
-
-    private fun openDocument(uri: Uri, confirmLarge: Boolean) {
+    private fun openDocument(uri: Uri, confirmLarge: Boolean, temporary: Boolean) {
         viewModelScope.launch {
             busy = true
             try {
                 val size = withContext(Dispatchers.IO) { store.size(uri) }
                 if (confirmLarge && size != null && size > DocumentStore.WARN_SIZE_BYTES) {
-                    dialog = DialogState.LargeFile(uri, size)
+                    dialog = DialogState.LargeFile(uri, size, temporary)
                     return@launch
                 }
                 val (name, decoded) = withContext(Dispatchers.IO) { store.displayName(uri) to store.read(uri) }
                 loadDocument(DocInfo(uri, name, decoded.encoding, decoded.lineEnding), decoded.text)
-                addRecent(uri, name)
+                updateLibrary { Library.recordOpened(it, uri, name, System.currentTimeMillis(), temporary) }
             } catch (e: DocumentStore.FileTooLargeException) {
                 send(UiEvent.Message("This file is too large to open (${formatSize(e.size)})."))
             } catch (e: Exception) {
-                removeRecent(uri)
                 send(UiEvent.Message("Couldn't open the file: ${e.readable()}"))
             } finally {
                 busy = false
@@ -196,6 +230,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun loadDocument(info: DocInfo, content: String) {
+        blockEdit = null
         text.edit {
             replace(0, length, content)
             selection = TextRange(0)
@@ -204,12 +239,17 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         doc = info
         savedText = content
         formatChanged = false
-        preview = false
+        mode = if (info.type == DocType.CSV) ViewMode.TABLE else ViewMode.EDIT
+        anchorOffset = 0
+        csvSort = null
+        csvHasHeader = true
         findVisible = false
+        saveStatus = null
         deleteDraft()
     }
 
     fun save(then: PendingAction? = null) {
+        commitBlockEdit()
         val uri = doc.uri
         if (uri == null) {
             afterSave = then
@@ -220,6 +260,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun saveAs() {
+        commitBlockEdit()
         afterSave = null
         send(UiEvent.LaunchSaveAs(doc.name))
     }
@@ -235,11 +276,28 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun writeTo(uri: Uri, name: String, then: PendingAction?) {
+    /** Saves the current text as a new file [name] inside a favorite folder. */
+    fun saveIntoFolder(treeUri: Uri, documentId: String, name: String) {
+        commitBlockEdit()
+        dialog = null
+        viewModelScope.launch {
+            try {
+                val uri = withContext(Dispatchers.IO) { store.createInFolder(treeUri, documentId, name) }
+                val actualName = withContext(Dispatchers.IO) { store.displayName(uri) }
+                writeTo(uri, actualName, then = null)
+            } catch (e: Exception) {
+                send(UiEvent.Message("Couldn't create $name: ${e.readable()}"))
+            }
+        }
+    }
+
+    private fun writeTo(uri: Uri, name: String, then: PendingAction?, quiet: Boolean = false) {
         val content = text.text.toString()
         val info = doc.copy(uri = uri, name = name)
+        val typeChanged = info.type != doc.type
         viewModelScope.launch {
-            busy = true
+            saving = true
+            if (quiet) saveStatus = "Saving…" else busy = true
             try {
                 withContext(Dispatchers.IO) {
                     store.write(uri, TextCodec.encode(content, info.encoding, info.lineEnding))
@@ -248,18 +306,33 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 savedText = content
                 formatChanged = false
                 deleteDraft()
-                addRecent(uri, name)
-                send(UiEvent.Message("Saved $name"))
+                updateLibrary { Library.recordEdited(it, uri, name, System.currentTimeMillis()) }
+                saveStatus = "Saved " + DateFormat.getTimeInstance(DateFormat.SHORT).format(Date())
+                if (typeChanged) mode = if (info.type == DocType.CSV) ViewMode.TABLE else ViewMode.EDIT
+                if (!quiet) send(UiEvent.Message("Saved $name"))
                 then?.let(::perform)
             } catch (e: Exception) {
-                // Typically a file opened read-only (e.g. shared from another app): let the user pick a new place.
-                afterSave = then
-                send(UiEvent.Message("Couldn't save to $name: ${e.readable()}. Choose where to save a copy."))
-                send(UiEvent.LaunchSaveAs(name))
+                if (quiet) {
+                    saveStatus = "Auto-save failed"
+                    send(UiEvent.Message("Auto-save failed: ${e.readable()}. Use Save as to save a copy."))
+                } else {
+                    // Typically a file opened read-only (e.g. shared from another app): pick a new place.
+                    afterSave = then
+                    send(UiEvent.Message("Couldn't save to $name: ${e.readable()}. Choose where to save a copy."))
+                    send(UiEvent.LaunchSaveAs(name))
+                }
             } finally {
+                saving = false
                 busy = false
             }
         }
+    }
+
+    /** Auto-save: called a moment after typing stops, and when the app goes to the background. */
+    fun autoSave() {
+        val uri = doc.uri ?: return
+        if (!settings.autoSave || !isDirty || saving || blockEdit != null) return
+        writeTo(uri, doc.name, then = null, quiet = true)
     }
 
     fun setEncoding(encoding: TextEncoding) {
@@ -274,27 +347,74 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         formatChanged = true
     }
 
-    private fun addRecent(uri: Uri, name: String) {
-        if (!store.hasPersistedPermission(uri)) return
-        recent = (listOf(RecentFile(uri, name)) + recent.filter { it.uri != uri }).take(MAX_RECENT)
-        prefs.saveRecent(recent)
+    // ---- Library: favorites and history ----
+
+    private fun updateLibrary(change: (LibraryData) -> LibraryData) {
+        library = change(library)
+        val snapshot = library
+        viewModelScope.launch(Dispatchers.IO) { libraryStore.save(snapshot) }
     }
 
-    private fun removeRecent(uri: Uri) {
-        if (recent.none { it.uri == uri }) return
-        recent = recent.filter { it.uri != uri }
-        prefs.saveRecent(recent)
+    fun toggleFavoriteCurrent() {
+        val uri = doc.uri
+        if (uri == null) {
+            send(UiEvent.Message("Save the file first, then star it."))
+            return
+        }
+        toggleFavoriteFile(uri, doc.name)
     }
+
+    fun toggleFavoriteFile(uri: Uri, name: String) = updateLibrary { lib ->
+        if (lib.favoriteFiles.any { it.uri == uri }) {
+            lib.copy(favoriteFiles = lib.favoriteFiles.filter { it.uri != uri })
+        } else {
+            lib.copy(favoriteFiles = lib.favoriteFiles + FavoriteFile(uri, name))
+        }
+    }
+
+    fun addFavoriteFolder() = send(UiEvent.LaunchFolderPicker)
+
+    fun onFolderPicked(treeUri: Uri?) {
+        if (treeUri == null) return
+        viewModelScope.launch {
+            try {
+                val name = withContext(Dispatchers.IO) {
+                    store.persistTreePermission(treeUri)
+                    store.folderName(treeUri)
+                }
+                updateLibrary { lib ->
+                    lib.copy(favoriteFolders = lib.favoriteFolders.filter { it.treeUri != treeUri } + FavoriteFolder(treeUri, name))
+                }
+            } catch (e: Exception) {
+                send(UiEvent.Message("This location doesn't allow folder access: ${e.readable()}"))
+            }
+        }
+    }
+
+    fun removeFavoriteFolder(folder: FavoriteFolder) {
+        store.releaseTreePermission(folder.treeUri)
+        updateLibrary { lib -> lib.copy(favoriteFolders = lib.favoriteFolders.filter { it.treeUri != folder.treeUri }) }
+    }
+
+    suspend fun listFolder(treeUri: Uri, documentId: String): Result<List<FolderItem>> =
+        withContext(Dispatchers.IO) { runCatching { store.listFolder(treeUri, documentId) } }
+
+    fun removeHistory(uri: Uri) = updateLibrary { lib -> lib.copy(history = lib.history.filter { it.uri != uri }) }
+
+    fun clearHistory() = updateLibrary { it.copy(history = emptyList()) }
 
     // ---- Edit ----
 
-    fun undo() = text.undoState.undo()
-    fun redo() = text.undoState.redo()
-    val canUndo get() = text.undoState.canUndo
-    val canRedo get() = text.undoState.canRedo
+    /** The text field the toolbar and menus act on: a Markdown block being edited, or the main text. */
+    val activeState: TextFieldState get() = blockEdit?.state ?: text
+
+    fun undo() = activeState.undoState.undo()
+    fun redo() = activeState.undoState.redo()
+    val canUndo get() = activeState.undoState.canUndo
+    val canRedo get() = activeState.undoState.canRedo
 
     fun replaceSelection(with: String) {
-        text.edit {
+        activeState.edit {
             val start = minOf(selection.start, selection.end)
             val end = maxOf(selection.start, selection.end)
             replace(start, end, with)
@@ -303,13 +423,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun selectedText(): String {
-        val s = text.selection
-        return text.text.subSequence(s.min, s.max).toString()
+        val s = activeState.selection
+        return activeState.text.subSequence(s.min, s.max).toString()
     }
 
     fun selectAll() {
-        text.edit { selection = TextRange(0, length) }
-        send(UiEvent.FocusEditor)
+        activeState.edit { selection = TextRange(0, length) }
+        if (blockEdit == null) send(UiEvent.FocusEditor)
     }
 
     fun insertTimeDate() {
@@ -319,7 +439,19 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         replaceSelection(stamp)
     }
 
+    /** Applies a Markdown toolbar action to the active text field as one undo step. */
+    fun applyMarkdown(action: (text: String, selStart: Int, selEnd: Int) -> TextEdit) {
+        val state = activeState
+        val sel = state.selection
+        val edit = action(state.text.toString(), sel.start, sel.end)
+        state.edit {
+            replace(edit.start, edit.end, edit.replacement)
+            selection = TextRange(edit.selStart, edit.selEnd)
+        }
+    }
+
     fun showFind(replace: Boolean) {
+        commitBlockEdit()
         findVisible = true
         replaceVisible = replace
         val sel = selectedText()
@@ -353,19 +485,17 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun replaceOne() {
         val sel = text.selection
         if (TextSearch.matchesAt(text.text, sel.min until sel.max, findQuery, matchCase)) {
-            replaceSelection(replaceWith)
+            text.edit {
+                replace(sel.min, sel.max, replaceWith)
+                selection = TextRange(sel.min + replaceWith.length)
+            }
         }
         findNext()
     }
 
     fun replaceAll() {
         val (result, count) = TextSearch.replaceAll(text.text.toString(), findQuery, replaceWith, matchCase)
-        if (count > 0) {
-            text.edit {
-                replace(0, length, result)
-                selection = TextRange(0)
-            }
-        }
+        if (count > 0) replaceAllText(result)
         send(UiEvent.Message(if (count == 0) "Cannot find \"$findQuery\"" else "Replaced $count occurrence(s)"))
     }
 
@@ -377,9 +507,108 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun selectAndReveal(start: Int, end: Int) {
+        commitBlockEdit()
         text.edit { selection = TextRange(start, end) }
-        preview = false
+        if (mode == ViewMode.PREVIEW || mode == ViewMode.TABLE) mode = ViewMode.EDIT
+        anchorOffset = start
         send(UiEvent.FocusEditor)
+    }
+
+    private fun replaceAllText(newText: String) {
+        text.edit {
+            replace(0, length, newText)
+            selection = TextRange(0)
+        }
+    }
+
+    // ---- Markdown: editing inside the formatted view ----
+
+    fun startBlockEdit(block: MdBlock) {
+        commitBlockEdit()
+        blockEdit = BlockEdit(block.start, block.end, TextFieldState(block.source, TextRange(block.source.length)))
+    }
+
+    /** Adds a new paragraph at the end of the document and starts editing it. */
+    fun startNewBlock() {
+        commitBlockEdit()
+        val current = text.text
+        val prefix = when {
+            current.isEmpty() -> ""
+            current.endsWith("\n\n") -> ""
+            current.endsWith("\n") -> "\n"
+            else -> "\n\n"
+        }
+        if (prefix.isNotEmpty()) text.edit { append(prefix) }
+        val at = text.text.length
+        blockEdit = BlockEdit(at, at, TextFieldState(""))
+    }
+
+    /** Writes the block being edited back into the document (one undo step). */
+    fun commitBlockEdit() {
+        val edit = blockEdit ?: return
+        blockEdit = null
+        val newSource = edit.state.text.toString()
+        val end = edit.end.coerceAtMost(text.text.length)
+        val start = edit.start.coerceAtMost(end)
+        if (text.text.subSequence(start, end).contentEquals(newSource)) return
+        text.edit { replace(start, end, newSource) }
+    }
+
+    fun cancelBlockEdit() {
+        blockEdit = null
+    }
+
+    fun toggleTask(block: MdBlock) {
+        commitBlockEdit()
+        val edit = MarkdownEdits.toggleTaskAtLine(text.text.toString(), block.start)
+        text.edit { replace(edit.start, edit.end, edit.replacement) }
+    }
+
+    fun changeMode(newMode: ViewMode) {
+        commitBlockEdit()
+        mode = newMode
+    }
+
+    // ---- CSV table ----
+
+    private fun csvDoc(): CsvDoc = Csv.parse(text.text, Csv.detectDelimiter(text.text, doc.name))
+
+    private fun editCsv(change: (CsvDoc) -> CsvDoc) {
+        replaceAllText(Csv.write(change(csvDoc())))
+    }
+
+    fun csvSetCell(row: Int, col: Int, value: String) = editCsv { Csv.setCell(it, row, col, value) }
+    fun csvInsertRow(at: Int) = editCsv { Csv.insertRow(it, at) }
+    fun csvDeleteRow(row: Int) = editCsv { Csv.deleteRow(it, row) }
+
+    fun csvInsertColumn(at: Int) {
+        val sort = csvSort
+        if (sort != null && sort.column >= at) csvSort = sort.copy(column = sort.column + 1)
+        editCsv { Csv.insertColumn(it, at, if (csvHasHeader) "New column" else null) }
+    }
+
+    fun csvDeleteColumn(col: Int) {
+        val sort = csvSort
+        if (sort != null) csvSort = if (sort.column == col) null else if (sort.column > col) sort.copy(column = sort.column - 1) else sort
+        editCsv { Csv.deleteColumn(it, col) }
+    }
+
+    /** Header tap: ascending → descending → original order. View only; the file is unchanged. */
+    fun csvCycleSort(col: Int) {
+        val s = csvSort
+        csvSort = when {
+            s == null || s.column != col -> CsvSort(col, ascending = true)
+            s.ascending -> CsvSort(col, ascending = false)
+            else -> null
+        }
+    }
+
+    /** Writes the current sort order into the file. */
+    fun csvSaveSortOrder() {
+        val sort = csvSort ?: return
+        editCsv { d -> Csv.reorder(d, csvHasHeader, Csv.sortedOrder(d, csvHasHeader, sort.column, sort.ascending)) }
+        csvSort = null
+        send(UiEvent.Message("Rows saved in this order. Undo to revert."))
     }
 
     // ---- View ----
@@ -396,8 +625,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Unsaved work survives the app being closed by the system ----
 
-    /** Called from onStop. Keeps unsaved text on disk so it comes back if Android kills the app. */
-    fun saveDraft() {
+    /** Called from onStop: auto-saves if enabled, and keeps unsaved text on disk in case Android kills the app. */
+    fun onBackground() {
+        commitBlockEdit()
+        autoSave()
+        saveDraft()
+    }
+
+    private fun saveDraft() {
         if (exiting || !isDirty) {
             deleteDraft()
             return
@@ -423,7 +658,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             val p = Properties().apply { draftMeta.inputStream().use { load(it) } }
             val info = DocInfo(
                 uri = p.getProperty("uri")?.let(Uri::parse),
-                name = p.getProperty("name") ?: DocInfo.UNTITLED,
+                name = p.getProperty("name") ?: DocType.TEXT.untitledName,
                 encoding = TextEncoding.valueOf(p.getProperty("encoding") ?: TextEncoding.UTF8.name),
                 lineEnding = LineEnding.valueOf(p.getProperty("lineEnding") ?: TextCodec.DEFAULT_LINE_ENDING.name),
             )
@@ -434,6 +669,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             }
             text.undoState.clearHistory()
             doc = info
+            mode = if (info.type == DocType.CSV) ViewMode.TABLE else ViewMode.EDIT
             savedText = null
         }
     }
@@ -454,7 +690,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
-        const val MAX_RECENT = 10
+        const val AUTOSAVE_DELAY_MS = 2000L
 
         fun formatSize(bytes: Long): String = when {
             bytes >= 1024 * 1024 -> "%.1f MB".format(bytes / (1024.0 * 1024.0))

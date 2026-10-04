@@ -1,15 +1,18 @@
 package io.github.nimdvir.notepad
 
 import android.content.Context
-import android.net.Uri
 
-data class RecentFile(val uri: Uri, val name: String)
+enum class ThemeMode(val label: String) { SYSTEM("System default"), LIGHT("Light"), DARK("Dark") }
 
 data class ViewSettings(
     val wordWrap: Boolean = true,
     val statusBar: Boolean = true,
     val monospace: Boolean = true,
     val fontSizeSp: Float = DEFAULT_FONT_SIZE,
+    val theme: ThemeMode = ThemeMode.SYSTEM,
+    val autoSave: Boolean = false,
+    val syncScroll: Boolean = true,
+    val markdownToolbar: Boolean = true,
 ) {
     companion object {
         const val DEFAULT_FONT_SIZE = 16f
@@ -18,7 +21,7 @@ data class ViewSettings(
     }
 }
 
-/** Small settings and the recent-files list, kept in SharedPreferences. */
+/** Small settings, kept in SharedPreferences. */
 class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("notepad", Context.MODE_PRIVATE)
 
@@ -27,6 +30,10 @@ class Prefs(context: Context) {
         statusBar = sp.getBoolean("statusBar", true),
         monospace = sp.getBoolean("monospace", true),
         fontSizeSp = sp.getFloat("fontSize", ViewSettings.DEFAULT_FONT_SIZE),
+        theme = runCatching { ThemeMode.valueOf(sp.getString("theme", null)!!) }.getOrDefault(ThemeMode.SYSTEM),
+        autoSave = sp.getBoolean("autoSave", false),
+        syncScroll = sp.getBoolean("syncScroll", true),
+        markdownToolbar = sp.getBoolean("markdownToolbar", true),
     )
 
     fun saveViewSettings(s: ViewSettings) {
@@ -35,16 +42,10 @@ class Prefs(context: Context) {
             .putBoolean("statusBar", s.statusBar)
             .putBoolean("monospace", s.monospace)
             .putFloat("fontSize", s.fontSizeSp)
+            .putString("theme", s.theme.name)
+            .putBoolean("autoSave", s.autoSave)
+            .putBoolean("syncScroll", s.syncScroll)
+            .putBoolean("markdownToolbar", s.markdownToolbar)
             .apply()
-    }
-
-    fun loadRecent(): List<RecentFile> =
-        sp.getString("recent", "").orEmpty().lines().filter { it.isNotBlank() }.mapNotNull { line ->
-            val parts = line.split('\t', limit = 2)
-            if (parts.size == 2) RecentFile(Uri.parse(parts[0]), parts[1]) else null
-        }
-
-    fun saveRecent(list: List<RecentFile>) {
-        sp.edit().putString("recent", list.joinToString("\n") { "${it.uri}\t${it.name}" }).apply()
     }
 }

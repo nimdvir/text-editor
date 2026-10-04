@@ -20,15 +20,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- "Open with Notepad" for text and Markdown files from Drive, Files, email, etc. -->
+            <!-- "Open with Notepad" for text, Markdown and CSV files from Drive, Files, email, etc.
+                 octet-stream is included because Drive sometimes labels .md files that way. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.EDIT" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="content" />
-                <data android:mimeType="text/plain" />
-                <data android:mimeType="text/markdown" />
-                <data android:mimeType="text/x-markdown" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="application/csv" />
+                <data android:mimeType="application/x-markdown" />
+                <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>
     </application>

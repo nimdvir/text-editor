@@ -12,12 +12,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -36,11 +40,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.nimdvir.notepad.DialogState
+import io.github.nimdvir.notepad.DocType
 import io.github.nimdvir.notepad.EditorViewModel
 import io.github.nimdvir.notepad.LineEnding
 import io.github.nimdvir.notepad.PendingAction
 import io.github.nimdvir.notepad.TextEncoding
 import io.github.nimdvir.notepad.TextSearch
+import io.github.nimdvir.notepad.ThemeMode
+import io.github.nimdvir.notepad.ViewMode
 import io.github.nimdvir.notepad.ViewSettings
 import kotlin.math.roundToInt
 
@@ -52,9 +59,12 @@ fun TitleBar(vm: EditorViewModel) {
                 .fillMaxWidth()
                 .statusBarsPadding()
                 .height(48.dp)
-                .padding(start = 16.dp, end = 4.dp),
+                .padding(end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            IconButton(onClick = { vm.dialog = DialogState.Library }) {
+                Icon(Icons.Filled.Menu, contentDescription = "Favorites and history")
+            }
             Text(
                 text = (if (vm.isDirty) "*" else "") + vm.doc.name,
                 style = MaterialTheme.typography.titleMedium,
@@ -62,9 +72,17 @@ fun TitleBar(vm: EditorViewModel) {
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            if (vm.doc.isMarkdown || vm.preview) {
-                TextButton(onClick = { vm.preview = !vm.preview }) {
-                    Text(if (vm.preview) "Edit" else "Preview")
+            if (vm.doc.uri != null) {
+                IconButton(onClick = { vm.toggleFavoriteCurrent() }) {
+                    Icon(
+                        Icons.Filled.Star,
+                        contentDescription = if (vm.isFavorite) "Remove from favorites" else "Add to favorites",
+                        tint = if (vm.isFavorite) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                        },
+                    )
                 }
             }
             if (vm.isDirty) {
@@ -75,23 +93,32 @@ fun TitleBar(vm: EditorViewModel) {
 }
 
 @Composable
-fun MenuBar(vm: EditorViewModel, onPaste: (String) -> Unit) {
+fun MenuBar(vm: EditorViewModel) {
     val clipboard = LocalClipboardManager.current
+    val type = vm.doc.type
     Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Menu("File") { close ->
-                Item("New", "Ctrl+N") { close(); vm.request(PendingAction.New(markdown = false)) }
-                Item("New Markdown file") { close(); vm.request(PendingAction.New(markdown = true)) }
+                Item("New text file", "Ctrl+N") { close(); vm.request(PendingAction.New(DocType.TEXT)) }
+                Item("New Markdown file") { close(); vm.request(PendingAction.New(DocType.MARKDOWN)) }
+                Item("New CSV file") { close(); vm.request(PendingAction.New(DocType.CSV)) }
                 Item("Open…", "Ctrl+O") { close(); vm.request(PendingAction.OpenPicker) }
-                Item("Recent files…", enabled = vm.recent.isNotEmpty()) { close(); vm.dialog = DialogState.Recent }
+                Item("Favorites & history…") { close(); vm.dialog = DialogState.Library }
                 HorizontalDivider()
                 Item("Save", "Ctrl+S") { close(); vm.save() }
                 Item("Save as…", "Ctrl+Shift+S") { close(); vm.saveAs() }
+                Item("Auto save", checked = vm.settings.autoSave) {
+                    close()
+                    vm.updateSettings { it.copy(autoSave = !it.autoSave) }
+                }
                 HorizontalDivider()
                 Item("Exit") { close(); vm.request(PendingAction.Exit) }
             }
             Menu("Edit") { close ->
-                val hasSelection = !vm.text.selection.collapsed
+                val hasSelection = !vm.activeState.selection.collapsed
                 Item("Undo", "Ctrl+Z", enabled = vm.canUndo) { close(); vm.undo() }
                 Item("Redo", "Ctrl+Y", enabled = vm.canRedo) { close(); vm.redo() }
                 HorizontalDivider()
@@ -106,7 +133,7 @@ fun MenuBar(vm: EditorViewModel, onPaste: (String) -> Unit) {
                 }
                 Item("Paste", "Ctrl+V") {
                     close()
-                    clipboard.getText()?.text?.let(onPaste)
+                    clipboard.getText()?.text?.let { vm.replaceSelection(it) }
                 }
                 Item("Delete", "Del", enabled = hasSelection) { close(); vm.replaceSelection("") }
                 HorizontalDivider()
@@ -118,6 +145,10 @@ fun MenuBar(vm: EditorViewModel, onPaste: (String) -> Unit) {
                 HorizontalDivider()
                 Item("Select all", "Ctrl+A") { close(); vm.selectAll() }
                 Item("Time/Date", "F5") { close(); vm.insertTimeDate() }
+                if (type == DocType.CSV) {
+                    HorizontalDivider()
+                    Item("Save rows in this order", enabled = vm.csvSort != null) { close(); vm.csvSaveSortOrder() }
+                }
             }
             Menu("View") { close ->
                 val s = vm.settings
@@ -128,7 +159,64 @@ fun MenuBar(vm: EditorViewModel, onPaste: (String) -> Unit) {
                 Item("Word wrap", checked = s.wordWrap) { close(); vm.updateSettings { it.copy(wordWrap = !it.wordWrap) } }
                 Item("Status bar", checked = s.statusBar) { close(); vm.updateSettings { it.copy(statusBar = !it.statusBar) } }
                 Item("Monospace font", checked = s.monospace) { close(); vm.updateSettings { it.copy(monospace = !it.monospace) } }
-                Item("Markdown preview", checked = vm.preview) { close(); vm.preview = !vm.preview }
+                if (type == DocType.MARKDOWN) {
+                    Item("Markdown toolbar", checked = s.markdownToolbar) {
+                        close(); vm.updateSettings { it.copy(markdownToolbar = !it.markdownToolbar) }
+                    }
+                    Item("Sync scroll (split view)", checked = s.syncScroll) {
+                        close(); vm.updateSettings { it.copy(syncScroll = !it.syncScroll) }
+                    }
+                }
+                if (type == DocType.CSV) {
+                    Item("First row is header", checked = vm.csvHasHeader) { close(); vm.csvHasHeader = !vm.csvHasHeader }
+                }
+                HorizontalDivider()
+                MenuHeader("Theme")
+                for (mode in ThemeMode.entries) {
+                    Item(mode.label, checked = s.theme == mode) { close(); vm.updateSettings { it.copy(theme = mode) } }
+                }
+            }
+            Spacer(Modifier.weight(1f))
+            when (type) {
+                DocType.MARKDOWN -> ModeSwitch(
+                    options = listOf(ViewMode.EDIT to "Edit", ViewMode.SPLIT to "Split", ViewMode.PREVIEW to "Preview"),
+                    selected = vm.mode,
+                    onSelect = vm::changeMode,
+                )
+                DocType.CSV -> ModeSwitch(
+                    options = listOf(ViewMode.EDIT to "Text", ViewMode.TABLE to "Table"),
+                    selected = vm.mode,
+                    onSelect = vm::changeMode,
+                )
+                DocType.TEXT -> Unit
+            }
+        }
+    }
+}
+
+/** A compact segmented control: Edit | Split | Preview, or Text | Table. */
+@Composable
+private fun ModeSwitch(options: List<Pair<ViewMode, String>>, selected: ViewMode, onSelect: (ViewMode) -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        modifier = Modifier.padding(end = 4.dp),
+    ) {
+        Row {
+            for ((mode, label) in options) {
+                val on = mode == selected
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = if (on) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
+                    modifier = Modifier.clickable { onSelect(mode) },
+                ) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (on) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
             }
         }
     }
@@ -150,6 +238,7 @@ fun StatusBar(vm: EditorViewModel) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            vm.saveStatus?.let { StatusText(it) }
             StatusText("Ln ${position.first}, Col ${position.second}")
             StatusText("$chars characters")
             StatusText("$zoom%")
@@ -194,6 +283,16 @@ private fun Menu(title: String, content: @Composable MenuScope.(close: () -> Uni
             MenuScope(close).content(close)
         }
     }
+}
+
+@Composable
+private fun MenuScope.MenuHeader(label: String) {
+    Text(
+        label,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+    )
 }
 
 @Composable

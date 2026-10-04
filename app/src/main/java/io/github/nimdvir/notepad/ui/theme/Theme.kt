@@ -9,10 +9,17 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
+import io.github.nimdvir.notepad.ThemeMode
 
 @Composable
-fun NotepadTheme(content: @Composable () -> Unit) {
-    val dark = isSystemInDarkTheme()
+fun isDarkTheme(mode: ThemeMode): Boolean = when (mode) {
+    ThemeMode.SYSTEM -> isSystemInDarkTheme()
+    ThemeMode.LIGHT -> false
+    ThemeMode.DARK -> true
+}
+
+@Composable
+fun NotepadTheme(dark: Boolean, content: @Composable () -> Unit) {
     val colors = when {
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current

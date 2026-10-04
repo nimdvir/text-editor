@@ -4,14 +4,41 @@ A simple text editor for Android that works like Windows Notepad. It opens, edit
 
 ## Features
 
-- **File:** New, New Markdown file, Open, Recent files, Save, Save as, Exit. You get a "Save changes?" prompt before anything unsaved is lost.
+- **File:** New text / Markdown / CSV file, Open, Save, Save as, **Auto save**, Exit. You get a "Save changes?" prompt before anything unsaved is lost.
 - **Edit:** Undo, Redo, Cut, Copy, Paste, Delete, Find, Find next/previous, Replace, Replace all, Go to line, Select all, Time/Date.
-- **View:** Zoom in/out, Word wrap, Status bar, Monospace font, Markdown preview.
-- **Status bar:** Line and column, character count, zoom, line endings (CRLF / LF / CR) and encoding (UTF-8, UTF-8 with BOM, UTF-16, ANSI). Tap the line endings or encoding to change them.
+- **View:** Zoom in/out, Word wrap, Status bar, Monospace font, and **Theme** (System, Light or Dark).
+- **Status bar:** Line and column, character count, zoom, line endings (CRLF / LF / CR) and encoding (UTF-8, UTF-8 with BOM, UTF-16, ANSI). Tap the line endings or encoding to change them. With auto save on, it also shows when the file was last saved.
 - Keeps each file's original encoding and line endings when you save, so files from Windows stay Windows-friendly.
 - Keyboard shortcuts work the same as in Notepad when you use a hardware keyboard (Ctrl+S, Ctrl+F, F3, F5, …).
 - If Android closes the app in the background, your unsaved text is kept and comes back the next time you open it.
-- Follows your phone's light/dark mode.
+
+### Markdown (.md)
+
+- **Edit | Split | Preview** switch in the menu bar.
+- **Styled editor:** while you type, headings appear bigger, `**bold**` appears bold, and the Markdown symbols are dimmed.
+- **Split view:** the text and the formatted view sit together, top/bottom in portrait and side by side in landscape. They scroll together (View → Sync scroll). Switching views keeps your place.
+- **Edit in the formatted view:** tap a paragraph, heading or list item to edit it in place. While you edit, that block shows its Markdown symbols. Tap **Done** or anywhere else to finish. Tap a checkbox to tick a task.
+- **Toolbar** above the keyboard (View → Markdown toolbar): headings, bold, italic, strikethrough, code, code block, bullet / numbered / task lists, check off a task, quote, link, image, table, horizontal line, indent, outdent. Each button toggles, so tapping it again removes the formatting.
+- **Smart Enter:** in a list, Enter starts the next bullet, number or task. Enter on an empty item ends the list.
+
+### CSV (.csv, .tsv)
+
+- Opens in **Table** view, with a Text | Table switch.
+- Shows a header row and row numbers. The delimiter (comma, semicolon, tab or pipe) is detected automatically. View → First row is header turns the header row on or off.
+- **Sort:** tap a column header to sort ascending, then descending, then back to the original order. Sorting only changes what you see. To keep the new order, choose **Save order** on the banner (or Edit → Save rows in this order).
+- **Edit:**
+  - Tap a cell to change it.
+  - Tap or long-press a row number to insert or delete rows.
+  - Long-press a column header to rename, insert or delete columns.
+- Cells you don't touch keep their exact formatting, including quotes.
+
+### Favorites & history
+
+Open it with the ☰ button or File → Favorites & history.
+
+- **Favorite files:** tap ★ next to the file name. Works for Google Drive files too.
+- **Favorite folders:** add a folder once, then browse it, open files from it, or save the current file into it. Folders on your phone work. Google Drive may not offer whole-folder access, depending on your Drive app.
+- **History:** the last 50 files you opened or saved, with when they were opened and edited. You can search, star or remove entries.
 
 ## How Google Drive works
 
@@ -20,7 +47,7 @@ The app uses Android's built-in file picker. No Google sign-in or setup is neede
 - **Open…** shows the picker. Tap the ☰ menu and choose **Drive**, then pick a file.
 - **Save** writes straight back to the same Drive file.
 - **Save as…** lets you pick a Drive folder and a file name.
-- In the Google Drive app you can also use **⋮ → Open with → Notepad** on a text or Markdown file.
+- In the Google Drive app, use **⋮ → Open with → Notepad** on a text, Markdown or CSV file. Save writes back to Drive if Drive allows editing from other apps. If it doesn't, the app asks where to save a copy.
 
 The Google Drive app must be installed and signed in on the phone. Files you open from Drive need an internet connection unless they are available offline.
 

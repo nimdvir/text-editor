@@ -1,17 +1,9 @@
 package io.github.nimdvir.notepad.ui
 
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -26,9 +18,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import io.github.nimdvir.notepad.RecentFile
 
 /** [onChoice]: true = Save, false = Don't save, null = Cancel. */
 @Composable
@@ -89,51 +78,4 @@ fun GoToLineDialog(onGo: (Int) -> Boolean, onCancel: () -> Unit) {
         dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
     )
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
-}
-
-@Composable
-fun RecentFilesDialog(
-    files: List<RecentFile>,
-    onOpen: (RecentFile) -> Unit,
-    onClear: () -> Unit,
-    onCancel: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onCancel,
-        title = { Text("Recent files") },
-        text = {
-            if (files.isEmpty()) {
-                Text("No recent files.")
-            } else {
-                LazyColumn(Modifier.heightIn(max = 360.dp)) {
-                    items(files, key = { it.uri.toString() }) { file ->
-                        Column(
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable { onOpen(file) }
-                                .padding(vertical = 10.dp),
-                        ) {
-                            Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                file.uri.authority.orEmpty().let(::providerLabel),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onCancel) { Text("Close") } },
-        dismissButton = {
-            if (files.isNotEmpty()) TextButton(onClick = onClear) { Text("Clear list") }
-        },
-    )
-}
-
-private fun providerLabel(authority: String): String = when {
-    "google.android.apps.docs" in authority -> "Google Drive"
-    authority == "com.android.externalstorage.documents" -> "This device"
-    authority == "com.android.providers.downloads.documents" -> "Downloads"
-    else -> authority
 }
