@@ -57,6 +57,8 @@ The Google Drive app must be installed and signed in on the phone. Files you ope
 2. Under **Artifacts**, download **notepad-debug-apk**. It downloads as a zip file. Unzip it to get `app-debug.apk`.
 3. Copy `app-debug.apk` to your phone, or download it on the phone directly, and tap it to install. Android will ask you to allow installs from that app (for example Files or Chrome). Allow it once.
 
+**If Android says "App not installed":** uninstall Notepad, then install the new APK. This is needed only once, when moving from a build made before version 2.1. From 2.1 on, every build uses the same signing key, so new versions install over the old one and keep your settings, favorites and history.
+
 This is a debug build, signed with a development key. To publish on Google Play you would need a release build signed with your own key.
 
 ## Build it yourself

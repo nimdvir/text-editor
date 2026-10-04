@@ -12,8 +12,19 @@ android {
         applicationId = "io.github.nimdvir.notepad"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "2.0"
+        versionCode = 3
+        versionName = "2.1"
+    }
+
+    // A fixed key, so every GitHub build is signed the same way and installs over the previous one.
+    // (Without it, each CI machine makes a new random debug key and Android refuses the update.)
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
