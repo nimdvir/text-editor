@@ -14,16 +14,18 @@ A simple text editor for Android that works like Windows Notepad. It opens, edit
 
 ### Markdown (.md)
 
-- **Edit | Split | Preview** switch in the menu bar.
+- The app opens on a new Markdown file. A new file you haven't typed in never asks to be saved.
+- A button on the right of the menu bar switches views: **✎ Edit → ◫ Split → 👁 Preview**. Each tap moves to the next.
 - **Styled editor:** while you type, headings appear bigger, `**bold**` appears bold, and the Markdown symbols are dimmed.
 - **Split view:** the text and the formatted view sit together, top/bottom in portrait and side by side in landscape. They scroll together (View → Sync scroll). Switching views keeps your place.
 - **Edit in the formatted view:** tap a paragraph, heading or list item to edit it in place. While you edit, that block shows its Markdown symbols. Tap **Done** or anywhere else to finish. Tap a checkbox to tick a task.
-- **Toolbar** above the keyboard (View → Markdown toolbar): headings, bold, italic, strikethrough, code, code block, bullet / numbered / task lists, check off a task, quote, link, image, table, horizontal line, indent, outdent. Each button toggles, so tapping it again removes the formatting.
+- **Toolbar** above the keyboard (View → Markdown toolbar): headings, bold, italic, strikethrough, code, code block, bullet / numbered / task lists, check off a task, quote, link, image, table, horizontal line, indent, outdent. Each button toggles, so tapping it again removes the formatting. With no selection, bold/italic/strike/code applies to the whole line when the cursor is at the start or end of the line, and to the word when the cursor is inside one. A selection across several lines is formatted line by line.
+- **While typing:** the title row and status bar hide to make room for the keyboard, and the line you're typing on stays visible.
 - **Smart Enter:** in a list, Enter starts the next bullet, number or task. Enter on an empty item ends the list.
 
 ### CSV (.csv, .tsv)
 
-- Opens in **Table** view, with a Text | Table switch.
+- Opens in **Table** view. The view button switches between ▦ Table and ✎ Text.
 - Shows a header row and row numbers. The delimiter (comma, semicolon, tab or pipe) is detected automatically. View → First row is header turns the header row on or off.
 - **Sort:** tap a column header to sort ascending, then descending, then back to the original order. Sorting only changes what you see. To keep the new order, choose **Save order** on the banner (or Edit → Save rows in this order).
 - **Edit:**

@@ -22,6 +22,41 @@ class MarkdownEditsTest {
     }
 
     @Test
+    fun noSelectionFormatsTheLineOrWord() {
+        val t = "- buy milk today"
+        // Cursor at the start of the line (before or after the list marker) or at its end: whole line.
+        assertEquals("- **buy milk today**", MarkdownEdits.toggleWrap(t, 0, 0, "**").applyTo(t))
+        assertEquals("- **buy milk today**", MarkdownEdits.toggleWrap(t, 2, 2, "**").applyTo(t))
+        assertEquals("- **buy milk today**", MarkdownEdits.toggleWrap(t, t.length, t.length, "**").applyTo(t))
+        // Cursor inside a word: that word.
+        assertEquals("- buy *milk* today", MarkdownEdits.toggleWrap(t, 8, 8, "*").applyTo(t))
+        // Tapping again on the line removes it.
+        val bold = "## **Title**"
+        assertEquals("## Title", MarkdownEdits.toggleWrap(bold, 3, 3, "**").applyTo(bold))
+        // Empty line: markers with a selected placeholder.
+        val e = MarkdownEdits.toggleWrap("a\n\nb", 2, 2, "**", "bold")
+        assertEquals("a\n**bold**\nb", e.applyTo("a\n\nb"))
+        assertEquals("bold", e.applyTo("a\n\nb").substring(e.selStart, e.selEnd))
+    }
+
+    @Test
+    fun boldAndItalicDontConfuseEachOther() {
+        val t = "a **b** c"
+        val italic = MarkdownEdits.toggleWrap(t, 4, 4, "*").applyTo(t) // cursor in "b"
+        assertEquals("a ***b*** c", italic)
+        assertEquals(t, MarkdownEdits.toggleWrap(italic, 5, 5, "*").applyTo(italic))
+        assertEquals("a *b* c", MarkdownEdits.toggleWrap(italic, 5, 5, "**").applyTo(italic))
+    }
+
+    @Test
+    fun multiLineSelectionFormatsEachLine() {
+        val t = "# One\n\n- two\nthree"
+        val bold = MarkdownEdits.toggleWrap(t, 0, t.length, "**").applyTo(t)
+        assertEquals("# **One**\n\n- **two**\n**three**", bold)
+        assertEquals(t, MarkdownEdits.toggleWrap(bold, 0, bold.length, "**").applyTo(bold))
+    }
+
+    @Test
     fun headings() {
         val t = "Title\nbody"
         val h2 = MarkdownEdits.setHeading(t, 2, 2, 2)

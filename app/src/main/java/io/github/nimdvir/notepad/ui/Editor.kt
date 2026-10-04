@@ -5,7 +5,9 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -15,12 +17,18 @@ import androidx.compose.foundation.text.input.TextFieldDecorator
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -64,9 +72,38 @@ fun Editor(
     val colors = MaterialTheme.colorScheme
     val output = remember(markdown, colors) { if (markdown) MarkdownOutputTransformation(colors) else null }
     val input = if (markdown) MarkdownListContinuation else null
+    val layoutRef = remember { arrayOfNulls<() -> TextLayoutResult?>(1) }
+    var focused by remember { mutableStateOf(false) }
     val common = Modifier
         .focusRequester(focusRequester)
-        .onFocusChanged { if (it.isFocused) onFocused() }
+        .onFocusChanged {
+            focused = it.isFocused
+            if (it.isFocused) onFocused()
+        }
+    val reportLayout: (() -> TextLayoutResult?) -> Unit = { get ->
+        layoutRef[0] = get
+        onLayout(get)
+    }
+
+    // When the keyboard opens (or resizes) the editor gets shorter: keep the line being typed on screen.
+    val imeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
+    LaunchedEffect(imeBottom, focused) {
+        if (!focused) return@LaunchedEffect
+        withFrameNanos { }
+        withFrameNanos { }
+        val layout = layoutRef[0]?.invoke() ?: return@LaunchedEffect
+        val offset = state.selection.end.coerceIn(0, layout.layoutInput.text.length)
+        val caret = layout.getCursorRect(offset)
+        val viewport = scrollState.viewportSize
+        if (viewport <= 0) return@LaunchedEffect
+        val margin = caret.height.toInt()
+        when {
+            caret.bottom + margin > scrollState.value + viewport ->
+                scrollState.scrollTo((caret.bottom + margin - viewport).toInt())
+            caret.top < scrollState.value ->
+                scrollState.scrollTo(caret.top.toInt())
+        }
+    }
 
     if (settings.wordWrap) {
         BasicTextField(
@@ -75,7 +112,7 @@ fun Editor(
             inputTransformation = input,
             textStyle = style,
             keyboardOptions = keyboard,
-            onTextLayout = { getResult -> onLayout(getResult) },
+            onTextLayout = { getResult -> reportLayout(getResult) },
             cursorBrush = cursor,
             outputTransformation = output,
             decorator = EditorPadding,
@@ -95,7 +132,7 @@ fun Editor(
                 inputTransformation = input,
                 textStyle = style,
                 keyboardOptions = keyboard,
-                onTextLayout = { getResult -> onLayout(getResult) },
+                onTextLayout = { getResult -> reportLayout(getResult) },
                 cursorBrush = cursor,
                 outputTransformation = output,
                 decorator = EditorPadding,

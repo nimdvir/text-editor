@@ -37,7 +37,7 @@ enum class ViewMode { EDIT, SPLIT, PREVIEW, TABLE }
 /** What is open: where it lives and how to write it back. `uri == null` means never saved. */
 data class DocInfo(
     val uri: Uri? = null,
-    val name: String = DocType.TEXT.untitledName,
+    val name: String = DocType.MARKDOWN.untitledName,
     val encoding: TextEncoding = TextEncoding.UTF8,
     val lineEnding: LineEnding = TextCodec.DEFAULT_LINE_ENDING,
 ) {
@@ -99,7 +99,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     val isDirty by derivedStateOf {
         val saved = savedText
-        saved == null || formatChanged || !text.text.contentEquals(saved)
+        val current = text.text
+        when {
+            // A new, untouched file (empty or just the starting template) has nothing worth saving.
+            doc.uri == null && (current.isBlank() || current.contentEquals(doc.type.initialText)) -> false
+            else -> saved == null || formatChanged || !current.contentEquals(saved)
+        }
     }
 
     var settings by mutableStateOf(prefs.loadViewSettings())
@@ -658,11 +663,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             val p = Properties().apply { draftMeta.inputStream().use { load(it) } }
             val info = DocInfo(
                 uri = p.getProperty("uri")?.let(Uri::parse),
-                name = p.getProperty("name") ?: DocType.TEXT.untitledName,
+                name = p.getProperty("name") ?: DocType.MARKDOWN.untitledName,
                 encoding = TextEncoding.valueOf(p.getProperty("encoding") ?: TextEncoding.UTF8.name),
                 lineEnding = LineEnding.valueOf(p.getProperty("lineEnding") ?: TextCodec.DEFAULT_LINE_ENDING.name),
             )
             val content = draftText.readText()
+            if (content.isBlank()) return
             text.edit {
                 replace(0, length, content)
                 selection = TextRange(0)

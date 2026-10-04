@@ -6,10 +6,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -59,6 +62,7 @@ private class LayoutRef {
  * Markdown workspace: the styled editor, the formatted view, or both side by side. In split view the two
  * scroll together; switching views keeps your place.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MarkdownWorkspace(vm: EditorViewModel, editorFocus: FocusRequester) {
     val editorScroll = rememberScrollState()
@@ -138,10 +142,12 @@ fun MarkdownWorkspace(vm: EditorViewModel, editorFocus: FocusRequester) {
                     previewPane(Modifier.weight(1f))
                 }
             } else {
+                // While typing, give the text more room than the formatted view.
+                val typing = WindowInsets.isImeVisible
                 Column(Modifier.fillMaxSize()) {
-                    editorPane(Modifier.weight(1f))
+                    editorPane(Modifier.weight(if (typing) 0.6f else 1f))
                     HorizontalDivider(thickness = 2.dp)
-                    previewPane(Modifier.weight(1f))
+                    previewPane(Modifier.weight(if (typing) 0.4f else 1f))
                 }
             }
         }

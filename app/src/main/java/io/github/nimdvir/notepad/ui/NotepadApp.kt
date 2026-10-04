@@ -10,10 +10,13 @@ import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.HorizontalDivider
@@ -63,6 +66,7 @@ private class CreateTextDocument : ActivityResultContract<String, Uri?>() {
         if (resultCode == Activity.RESULT_OK) intent?.data else null
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun NotepadApp(vm: EditorViewModel, finish: () -> Unit) {
     val snackbar = remember { SnackbarHostState() }
@@ -100,6 +104,7 @@ fun NotepadApp(vm: EditorViewModel, finish: () -> Unit) {
     }
 
     val type = vm.doc.type
+    val typing = WindowInsets.isImeVisible
     BackHandler {
         when {
             vm.findVisible -> vm.hideFind()
@@ -113,8 +118,9 @@ fun NotepadApp(vm: EditorViewModel, finish: () -> Unit) {
         modifier = Modifier.onPreviewKeyEvent { handleShortcut(it, vm) },
         topBar = {
             Column {
-                TitleBar(vm)
-                MenuBar(vm)
+                // With the keyboard open, drop the title row and status bar so the text keeps its space.
+                if (!typing) TitleBar(vm)
+                MenuBar(vm, compact = typing)
                 HorizontalDivider()
                 if (vm.findVisible) FindReplaceBar(vm)
             }
@@ -148,7 +154,7 @@ fun NotepadApp(vm: EditorViewModel, finish: () -> Unit) {
                 HorizontalDivider()
                 MarkdownToolbar(vm)
             }
-            if (vm.settings.statusBar) {
+            if (vm.settings.statusBar && !typing) {
                 HorizontalDivider()
                 StatusBar(vm)
             }
@@ -180,7 +186,7 @@ private fun handleShortcut(e: KeyEvent, vm: EditorViewModel): Boolean {
         ctrl && shift && e.key == Key.S -> vm.saveAs()
         ctrl && e.key == Key.S -> vm.save()
         ctrl && e.key == Key.O -> vm.request(PendingAction.OpenPicker)
-        ctrl && e.key == Key.N -> vm.request(PendingAction.New(DocType.TEXT))
+        ctrl && e.key == Key.N -> vm.request(PendingAction.New(DocType.MARKDOWN))
         ctrl && e.key == Key.F -> vm.showFind(replace = false)
         ctrl && e.key == Key.H -> vm.showFind(replace = true)
         ctrl && e.key == Key.G -> vm.dialog = DialogState.GoTo

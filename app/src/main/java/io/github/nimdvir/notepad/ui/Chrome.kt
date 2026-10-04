@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Menu
@@ -93,17 +92,22 @@ fun TitleBar(vm: EditorViewModel) {
 }
 
 @Composable
-fun MenuBar(vm: EditorViewModel) {
+/** The File / Edit / View row. [compact] (keyboard open): the title row is hidden, so this row takes its place. */
+fun MenuBar(vm: EditorViewModel, compact: Boolean = false) {
     val clipboard = LocalClipboardManager.current
     val type = vm.doc.type
     Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+            Modifier
+                .fillMaxWidth()
+                .then(if (compact) Modifier.statusBarsPadding() else Modifier)
+                .height(40.dp)
+                .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Menu("File") { close ->
-                Item("New text file", "Ctrl+N") { close(); vm.request(PendingAction.New(DocType.TEXT)) }
-                Item("New Markdown file") { close(); vm.request(PendingAction.New(DocType.MARKDOWN)) }
+                Item("New Markdown file", "Ctrl+N") { close(); vm.request(PendingAction.New(DocType.MARKDOWN)) }
+                Item("New text file") { close(); vm.request(PendingAction.New(DocType.TEXT)) }
                 Item("New CSV file") { close(); vm.request(PendingAction.New(DocType.CSV)) }
                 Item("Open…", "Ctrl+O") { close(); vm.request(PendingAction.OpenPicker) }
                 Item("Favorites & history…") { close(); vm.dialog = DialogState.Library }
@@ -177,14 +181,17 @@ fun MenuBar(vm: EditorViewModel) {
                 }
             }
             Spacer(Modifier.weight(1f))
+            if (compact && vm.isDirty) {
+                TextButton(onClick = { vm.save() }) { Text("Save") }
+            }
             when (type) {
-                DocType.MARKDOWN -> ModeSwitch(
-                    options = listOf(ViewMode.EDIT to "Edit", ViewMode.SPLIT to "Split", ViewMode.PREVIEW to "Preview"),
+                DocType.MARKDOWN -> ModeCycleButton(
+                    options = listOf(ViewMode.EDIT to "✎ Edit", ViewMode.SPLIT to "◫ Split", ViewMode.PREVIEW to "👁 Preview"),
                     selected = vm.mode,
                     onSelect = vm::changeMode,
                 )
-                DocType.CSV -> ModeSwitch(
-                    options = listOf(ViewMode.EDIT to "Text", ViewMode.TABLE to "Table"),
+                DocType.CSV -> ModeCycleButton(
+                    options = listOf(ViewMode.TABLE to "▦ Table", ViewMode.EDIT to "✎ Text"),
                     selected = vm.mode,
                     onSelect = vm::changeMode,
                 )
@@ -194,31 +201,13 @@ fun MenuBar(vm: EditorViewModel) {
     }
 }
 
-/** A compact segmented control: Edit | Split | Preview, or Text | Table. */
+/** One button showing the current view; each tap moves to the next (Edit → Split → Preview → Edit). */
 @Composable
-private fun ModeSwitch(options: List<Pair<ViewMode, String>>, selected: ViewMode, onSelect: (ViewMode) -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-        modifier = Modifier.padding(end = 4.dp),
-    ) {
-        Row {
-            for ((mode, label) in options) {
-                val on = mode == selected
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = if (on) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
-                    modifier = Modifier.clickable { onSelect(mode) },
-                ) {
-                    Text(
-                        label,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = if (on) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    )
-                }
-            }
-        }
+private fun ModeCycleButton(options: List<Pair<ViewMode, String>>, selected: ViewMode, onSelect: (ViewMode) -> Unit) {
+    val index = options.indexOfFirst { it.first == selected }.coerceAtLeast(0)
+    val next = options[(index + 1) % options.size]
+    TextButton(onClick = { onSelect(next.first) }) {
+        Text(options[index].second + " ▸", style = MaterialTheme.typography.labelLarge)
     }
 }
 

@@ -43,7 +43,7 @@ fun MarkdownToolbar(vm: EditorViewModel) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .height(44.dp)
+                .height(40.dp)
                 .horizontalScroll(rememberScrollState())
                 .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,

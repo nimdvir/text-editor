@@ -16,26 +16,117 @@ object MarkdownEdits {
 
     enum class LineStyle { BULLET, NUMBERED, TASK, QUOTE }
 
-    /** Bold/italic/strike/code: wraps the selection, or removes the markers if it's already wrapped. */
+    /** Heading, quote, list and task markers at the start of a line (possibly nested, e.g. "> - "). */
+    private val LINE_MARKUP = Regex("^(?:\\s*(?:#{1,6} |> ?|[-*+] \\[[ xX]\\] |[-*+] |\\d{1,9}[.)] ))*")
+
+    /**
+     * Bold/italic/strike/code. Tapping again removes it.
+     * - Text selected on one line: applies to the selection.
+     * - Text selected across lines: applies to each line separately (Markdown can't span lines).
+     * - No selection, cursor at the start or end of a line: applies to the whole line (after any list/heading marker).
+     * - No selection, cursor inside a word: applies to that word.
+     * - Otherwise: inserts the markers around a selected [placeholder], ready to type over.
+     */
     fun toggleWrap(text: String, selStart: Int, selEnd: Int, marker: String, placeholder: String = ""): TextEdit {
         val s = minOf(selStart, selEnd)
         val e = maxOf(selStart, selEnd)
+        if (s == e) {
+            val target = autoRange(text, s)
+                ?: return TextEdit(s, s, marker + placeholder + marker, s + marker.length, s + marker.length + placeholder.length)
+            return wrapRange(text, target.first, target.last + 1, marker)
+        }
+        if (text.substring(s, e).contains('\n')) return wrapLines(text, s, e, marker)
+        return wrapRange(text, s, e, marker)
+    }
+
+    /** Wraps [s, e) in [marker], or unwraps it if it already carries that marker (just outside or just inside). */
+    private fun wrapRange(text: String, s: Int, e: Int, marker: String): TextEdit {
         val n = marker.length
-        // Markers just outside the selection: **|text|**
-        if (s >= n && e + n <= text.length && text.regionMatches(s - n, marker, 0, n) &&
-            text.regionMatches(e, marker, 0, n)
-        ) {
+        val c = marker[0]
+        val before = runBefore(text, s, c)
+        val after = runAfter(text, e, c)
+        if (hasMarker(minOf(before, after), marker)) {
             val inner = text.substring(s, e)
             return TextEdit(s - n, e + n, inner, s - n, s - n + inner.length)
         }
-        // Markers included in the selection: |**text**|
         val selected = text.substring(s, e)
-        if (selected.length >= 2 * n && selected.startsWith(marker) && selected.endsWith(marker)) {
+        if (isWrapped(selected, marker)) {
             val inner = selected.substring(n, selected.length - n)
             return TextEdit(s, e, inner, s, s + inner.length)
         }
-        val inner = selected.ifEmpty { placeholder }
-        return TextEdit(s, e, marker + inner + marker, s + n, s + n + inner.length)
+        return TextEdit(s, e, marker + selected + marker, s + n, s + n + selected.length)
+    }
+
+    private fun wrapLines(text: String, selStart: Int, selEnd: Int, marker: String): TextEdit =
+        mapLines(text, selStart, selEnd) { lines ->
+            val parts = lines.map { splitLine(it) }
+            val contents = parts.map { it.second }.filter { it.isNotBlank() }
+            val unwrap = contents.isNotEmpty() && contents.all { isWrapped(it.trim(), marker) }
+            parts.map { (prefix, content, trailing) ->
+                when {
+                    content.isBlank() -> prefix + content + trailing
+                    unwrap -> prefix + content.substring(marker.length, content.length - marker.length) + trailing
+                    isWrapped(content, marker) -> prefix + content + trailing
+                    else -> prefix + marker + content + marker + trailing
+                }
+            }
+        }
+
+    /** Splits a line into (markup prefix, content, trailing spaces). */
+    private fun splitLine(line: String): Triple<String, String, String> {
+        val markup = LINE_MARKUP.find(line)?.value.orEmpty()
+        val prefix = markup + line.substring(markup.length).takeWhile { it == ' ' || it == '\t' }
+        val rest = line.substring(prefix.length)
+        val content = rest.trimEnd()
+        return Triple(prefix, content, rest.substring(content.length))
+    }
+
+    /** What a toolbar tap with no selection should format: the line's content or the word at [pos]. */
+    private fun autoRange(text: String, pos: Int): IntRange? {
+        val lineStart = text.lastIndexOf('\n', pos - 1) + 1
+        val lineEnd = text.indexOf('\n', pos).let { if (it < 0) text.length else it }
+        val (prefix, content, _) = splitLine(text.substring(lineStart, lineEnd))
+        if (content.isBlank()) return null
+        val contentStart = lineStart + prefix.length
+        val contentEnd = contentStart + content.length
+        if (pos <= contentStart || pos >= contentEnd) return contentStart until contentEnd
+        fun isWord(i: Int) = i in contentStart until contentEnd && (text[i].isLetterOrDigit() || text[i] == '_' || text[i] == '\'')
+        if (!isWord(pos - 1) && !isWord(pos)) return null
+        var a = pos
+        var b = pos
+        while (isWord(a - 1)) a--
+        while (isWord(b)) b++
+        return a until b
+    }
+
+    /**
+     * Whether a run of [run] marker characters means [marker] is applied. Bold and italic share `*`, so a
+     * run of 3 is both, 2 is bold only, 1 is italic only.
+     */
+    private fun hasMarker(run: Int, marker: String): Boolean = when (marker) {
+        "*", "_" -> run % 2 == 1
+        else -> run >= marker.length
+    }
+
+    private fun isWrapped(s: String, marker: String): Boolean {
+        val c = marker[0]
+        if (s.length < 2 * marker.length) return false
+        val lead = s.takeWhile { it == c }.length
+        val trail = s.takeLastWhile { it == c }.length
+        if (lead >= s.length) return false
+        return hasMarker(minOf(lead, trail), marker)
+    }
+
+    private fun runBefore(text: String, i: Int, c: Char): Int {
+        var n = 0
+        while (i - n - 1 >= 0 && text[i - n - 1] == c) n++
+        return n
+    }
+
+    private fun runAfter(text: String, i: Int, c: Char): Int {
+        var n = 0
+        while (i + n < text.length && text[i + n] == c) n++
+        return n
     }
 
     /** Sets every selected line to heading [level]; applying the same level again removes it. */
