@@ -1,10 +1,10 @@
 package io.github.nimdvir.notepad.ui
 
+import android.content.res.Configuration
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
@@ -43,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
 import com.mikepenz.markdown.m3.Markdown
@@ -134,8 +135,10 @@ fun MarkdownWorkspace(vm: EditorViewModel, editorFocus: FocusRequester) {
 
     when (mode) {
         ViewMode.PREVIEW -> previewPane(Modifier.fillMaxSize())
-        ViewMode.SPLIT -> BoxWithConstraints(Modifier.fillMaxSize()) {
-            if (maxWidth > maxHeight) {
+        // Side by side only in landscape. Deciding by the free space instead flips the layout when the
+        // keyboard opens, which rebuilds the editor, drops focus and closes the keyboard again.
+        ViewMode.SPLIT -> Box(Modifier.fillMaxSize()) {
+            if (LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE) {
                 Row(Modifier.fillMaxSize()) {
                     editorPane(Modifier.weight(1f))
                     VerticalDivider()
